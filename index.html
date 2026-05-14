@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Subaru Solterra | Three.js on S3 + CloudFront</title>
+    <meta
+      name="description"
+      content="A teaching example: procedural 3D Subaru Solterra rendered with Three.js, served from Amazon S3 through CloudFront."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+
+    <!--
+      Import map lets us write `import * as THREE from 'three'` in the browser
+      without a bundler. Pinned versions keep the example reproducible.
+      The CloudFront cache and S3 deploy stay trivial because everything is
+      static: just HTML, CSS, and ES modules.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header class="hud">
+      <h1>Subaru Solterra</h1>
+      <p class="subtitle">
+        Three.js example &middot; hosted on Amazon S3 + CloudFront
+      </p>
+    </header>
+
+    <aside class="controls">
+      <div class="control-group">
+        <label>
+          Body color
+          <input id="bodyColor" type="color" value="#1f3a5f" />
+        </label>
+        <label class="checkbox">
+          <input id="autoRotate" type="checkbox" checked />
+          Auto rotate
+        </label>
+        <label class="checkbox">
+          <input id="showShadow" type="checkbox" checked />
+          Shadows
+        </label>
+      </div>
+      <p class="hint">Drag to orbit &middot; scroll to zoom &middot; right-click to pan</p>
+    </aside>
+
+    <div id="loading" class="loading">Loading scene...</div>
+    <canvas id="scene"></canvas>
+
+    <footer class="credits">
+      Procedural model. Not affiliated with Subaru. For classroom use.
+    </footer>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

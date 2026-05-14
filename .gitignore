@@ -1,0 +1,18 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Logs / build output (none expected, but good defaults)
+*.log
+node_modules/
+dist/
+build/
+
+# Local AWS / temp
+.aws/
+versions.json
+markers.json
