@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Static website hosting for a Three.js example. A private S3 bucket holds the
   site files and CloudFront serves them globally with HTTPS, using an Origin
-  Access Control so the bucket itself never has to be public.
+  Access Control so the bucket itself never has to be public. Optionally
+  attaches a custom domain via ACM + Route 53.
 
 Parameters:
   ProjectName:
@@ -21,7 +22,62 @@ Parameters:
       - PriceClass_All
     Description: CloudFront price class. 100 covers US/Europe and is cheapest.
 
+  DomainName:
+    Type: String
+    Default: ""
+    Description: >
+      Apex/root domain to serve the site from (e.g. solterra.example.com or
+      example.com). Leave blank to skip the custom domain wiring and use the
+      default *.cloudfront.net hostname.
+
+  IncludeWww:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      If true and DomainName is set, also serve from www.<DomainName>. Only
+      meaningful when DomainName is an apex like example.com.
+
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: >
+      Route 53 hosted zone ID that owns DomainName. Required when DomainName
+      is set. Used both for ACM DNS validation and for the alias record(s).
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasWww: !And
+    - !Condition HasDomain
+    - !Equals [!Ref IncludeWww, "true"]
+
 Resources:
+  # ---------------------------------------------------------------------------
+  # ACM certificate. Must live in us-east-1 for CloudFront to use it, so the
+  # whole stack must be deployed in us-east-1 when DomainName is set.
+  #
+  # DomainValidationOptions with a HostedZoneId tells ACM to publish the
+  # validation CNAMEs into Route 53 itself, so issuance is hands-off.
+  # ---------------------------------------------------------------------------
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDomain
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames: !If
+        - HasWww
+        - [!Sub "www.${DomainName}"]
+        - !Ref AWS::NoValue
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+        - !If
+          - HasWww
+          - DomainName: !Sub "www.${DomainName}"
+            HostedZoneId: !Ref HostedZoneId
+          - !Ref AWS::NoValue
+
   # ---------------------------------------------------------------------------
   # S3 bucket. Private. Versioning on so accidental overwrites are recoverable.
   # ---------------------------------------------------------------------------
@@ -65,8 +121,8 @@ Resources:
         SigningProtocol: sigv4
 
   # ---------------------------------------------------------------------------
-  # Cache policy: allow GET/HEAD with default behavior. We disable query-string
-  # and cookie caching since this site is fully static.
+  # CloudFront distribution. Aliases and ViewerCertificate are conditional on
+  # whether a DomainName was supplied.
   # ---------------------------------------------------------------------------
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -78,6 +134,13 @@ Resources:
         IPV6Enabled: true
         DefaultRootObject: index.html
         PriceClass: !Ref PriceClass
+        Aliases: !If
+          - HasDomain
+          - !If
+            - HasWww
+            - [!Ref DomainName, !Sub "www.${DomainName}"]
+            - [!Ref DomainName]
+          - !Ref AWS::NoValue
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt SiteBucket.RegionalDomainName
@@ -105,8 +168,12 @@ Resources:
             ResponseCode: 200
             ResponsePagePath: /index.html
             ErrorCachingMinTTL: 10
-        ViewerCertificate:
-          CloudFrontDefaultCertificate: true
+        ViewerCertificate: !If
+          - HasDomain
+          - AcmCertificateArn: !Ref Certificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
 
   # ---------------------------------------------------------------------------
   # Bucket policy: only this distribution can read. Ties the OAC to the bucket.
@@ -128,6 +195,58 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
 
+  # ---------------------------------------------------------------------------
+  # Route 53 alias records. CloudFront's hosted zone ID is the same global
+  # constant Z2FDTNDATAQYW2, hardcoded here per AWS docs.
+  # ---------------------------------------------------------------------------
+  ApexAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
+  ApexAliasRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
+  WwwAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasWww
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "www.${DomainName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
+  WwwAliasRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: HasWww
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "www.${DomainName}"
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
 Outputs:
   BucketName:
     Description: Name of the S3 bucket holding the site files.
@@ -142,11 +261,19 @@ Outputs:
       Name: !Sub "${AWS::StackName}-DistributionId"
 
   DistributionDomainName:
-    Description: Public hostname of the site.
+    Description: CloudFront-assigned hostname (always works, even with custom domain).
     Value: !GetAtt CloudFrontDistribution.DomainName
     Export:
       Name: !Sub "${AWS::StackName}-DistributionDomainName"
 
   SiteUrl:
     Description: Open this in a browser after deploy + sync complete.
-    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+    Value: !If
+      - HasDomain
+      - !Sub "https://${DomainName}"
+      - !Sub "https://${CloudFrontDistribution.DomainName}"
+
+  CertificateArn:
+    Description: ACM certificate ARN (only when a custom domain is configured).
+    Condition: HasDomain
+    Value: !Ref Certificate

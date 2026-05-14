@@ -7,21 +7,50 @@
 #   4. Invalidate the CloudFront cache so students see the latest version.
 #
 # Prereqs: AWS CLI v2, credentials configured (`aws configure`), and
-# permission to create CloudFormation, S3, and CloudFront resources.
+# permission to create CloudFormation, S3, CloudFront, ACM, and Route 53
+# resources.
+#
+# Custom domain:
+#   ./deploy.ps1 -DomainName solterra.example.com -HostedZoneId Z123ABC...
+#   ./deploy.ps1 -DomainName example.com -IncludeWww -HostedZoneId Z123ABC...
+#
+# IMPORTANT: when DomainName is set, the stack must be in us-east-1 because
+# CloudFront only accepts ACM certs from that region.
 
 [CmdletBinding()]
 param(
-    [string]$StackName = "solterra-threejs",
-    [string]$Region    = "us-east-1",
-    [string]$ProjectName = "solterra-threejs"
+    [string]$StackName    = "solterra-threejs",
+    [string]$Region       = "us-east-1",
+    [string]$ProjectName  = "solterra-threejs",
+    [string]$DomainName   = "subaru-solterra-teaching-demo.com",
+    [string]$HostedZoneId = "Z10464841087A6RUMNM5P",
+    [switch]$IncludeWww = "true"
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($DomainName -and -not $HostedZoneId) {
+    throw "When -DomainName is set you must also pass -HostedZoneId."
+}
+if ($DomainName -and $Region -ne "us-east-1") {
+    throw "Custom domain certs for CloudFront must live in us-east-1. Re-run with -Region us-east-1."
+}
 
 # Resolve paths relative to this script so it works no matter where it's run.
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot  = Split-Path -Parent $scriptDir
 $template  = Join-Path $scriptDir "cloudformation.yaml"
+
+# Build the parameter-overrides list. Always pass ProjectName; pass domain
+# params only when a custom domain is requested so the conditions evaluate to
+# false in the template.
+$paramOverrides = @("ProjectName=$ProjectName")
+if ($DomainName) {
+    $wwwFlag = if ($IncludeWww.IsPresent) { "true" } else { "false" }
+    $paramOverrides += "DomainName=$DomainName"
+    $paramOverrides += "HostedZoneId=$HostedZoneId"
+    $paramOverrides += "IncludeWww=$wwwFlag"
+}
 
 Write-Host "==> Deploying CloudFormation stack '$StackName' in $Region..." -ForegroundColor Cyan
 aws cloudformation deploy `
@@ -29,7 +58,7 @@ aws cloudformation deploy `
     --template-file $template `
     --region $Region `
     --capabilities CAPABILITY_IAM `
-    --parameter-overrides ProjectName=$ProjectName
+    --parameter-overrides $paramOverrides
 if ($LASTEXITCODE -ne 0) { throw "Stack deploy failed." }
 
 Write-Host "==> Reading stack outputs..." -ForegroundColor Cyan
@@ -82,4 +111,7 @@ if ($LASTEXITCODE -ne 0) { throw "Invalidation failed." }
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
 Write-Host "Site: $siteUrl"
+if ($DomainName) {
+    Write-Host "DNS may take a few minutes to propagate the first time."
+}
 Write-Host "Note: CloudFront's first deploy can take 5-15 minutes to fully propagate."
