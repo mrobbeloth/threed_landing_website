@@ -24,7 +24,7 @@ param(
     [string]$ProjectName  = "solterra-threejs",
     [string]$DomainName   = "subaru-solterra-teaching-demo.com",
     [string]$HostedZoneId = "Z10464841087A6RUMNM5P",
-    [switch]$IncludeWww = "true"
+    [switch]$IncludeWww
 )
 
 $ErrorActionPreference = "Stop"
